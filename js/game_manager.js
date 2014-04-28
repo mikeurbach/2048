@@ -68,6 +68,16 @@ GameManager.prototype.addStartTiles = function () {
   }
 };
 
+// Adds a tile in the top left (worst case addRandomTile)
+GameManager.prototype.addTopLeftTile = function(grid) {
+  if(grid.cellsAvailable()) {
+    var value = Math.random() < 0.9 ? 2 : 4;
+    var tile = new Tile({x: 0, y: 0}, value);
+
+    grid.insertTile(tile);
+  }
+};
+
 // Adds a tile in a random position
 GameManager.prototype.addRandomTile = function (grid) {
   if (grid.cellsAvailable()) {
@@ -309,11 +319,15 @@ GameManager.prototype.findMinInTree = function (grid, depth, maxDepth) {
     }
   }
   
-  // if we can't move the way we want, we'll just move any way we can
-  if(depth == 0 && grid.leastDirection == -1)
-    for(var dir = 0; dir < 4; dir++)
-      if(grid[dir])
+  // if we can't put the biggest at the top left, try
+  // top, left, right, up in that order
+  if(depth == 0 && grid.leastDirection == -1){
+    for(var dir = 0; dir < 4; dir++){
+      if(grid[dir]){
 	grid.leastDirection = dir;
+      }
+    }
+  }
 }
 
 GameManager.prototype.generateMoveChildren = function (grid, depth, maxDepth) {
@@ -396,8 +410,13 @@ GameManager.prototype.generateGrid = function (direction, currentGridState) {
   });
 
   ret = moved ? newGrid : false;
-  if(ret)
-    this.addRandomTile(newGrid);
+  if(ret){
+    if(newGrid.cellAvailable({x: 0, y: 0})){
+      this.addTopLeftTile(newGrid);
+    } else {
+      this.addRandomTile(newGrid);
+    }
+  }
 
   return ret;
 };
@@ -440,14 +459,14 @@ GameManager.prototype.calculateEntropies = function (grids) {
 	    if(y < grid.size - 1 && grid.cells[x][y + 1]){
 	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x][y + 1].value, 2);
 	      if(grid.cells[x][y + 1].value > grid.cells[x][y].value)
-		monotonicity += 1;
+		monotonicity += grid.cells[x][y].value - (grid.cells[x][y].value - grid.cells[x][y + 1].value);
 	      // if(grid.cells[x][y].value == grid.cells[x][y + 1].value)
 	      // 	smoothness -= Math.exp(grid.cells[x][y].value);
 	    }
 	    if(x < grid.size - 1 && grid.cells[x + 1][y]){
 	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x + 1][y].value, 2);
 	      if(grid.cells[x + 1][y].value > grid.cells[x][y].value)
-		monotonicity += 1;
+		monotonicity += grid.cells[x][y].value - (grid.cells[x][y].value - grid.cells[x + 1][y].value);
 	      // if(grid.cells[x][y].value == grid.cells[x + 1][y].value)
 	      // 	smoothness -= Math.exp(grid.cells[x][y].value);
 	    }
@@ -474,18 +493,18 @@ GameManager.prototype.calculateEntropies = function (grids) {
 
       // weight smoothness and monotonicity so we can compare them
       if(smoothness > monotonicity){
-	smoothness /= smoothness;
 	monotonicity /= smoothness;
+	smoothness /= smoothness;
       } else {
 	smoothness /= monotonicity;
 	monotonicity /= monotonicity;
       }
 
       // entropy for this direction, could also use total, maxTile, cellsAvailable, or others
-      entropies[dir] = 0.3*smoothness + 0.7*monotonicity;
+      entropies[dir] = 0.4*smoothness + 0.6*monotonicity;
 
       // if the biggest tile isn't on a corner, freak out
-      if(!(maxLoc.x == 0 && maxLoc.y == 0))
+      if(maxLoc.x != 0 || maxLoc.y != 0)
 	entropies[dir] = Infinity;
     } 
   }
