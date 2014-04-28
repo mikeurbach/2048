@@ -308,6 +308,12 @@ GameManager.prototype.findMinInTree = function (grid, depth, maxDepth) {
       }
     }
   }
+  
+  // if we can't move the way we want, we'll just move any way we can
+  if(depth == 0 && grid.leastDirection == -1)
+    for(var dir = 0; dir < 4; dir++)
+      if(grid[dir])
+	grid.leastDirection = dir;
 }
 
 GameManager.prototype.generateMoveChildren = function (grid, depth, maxDepth) {
@@ -411,13 +417,14 @@ GameManager.prototype.calculateEntropies = function (grids) {
       var maxTile = -Infinity;
       var maxLoc = {};
       var cellsAvailable = 0;
+      var monotonicity = 0;
 
       // for each cell
       for(var x = 0; x < grid.size; x++){
 	for(var y = 0; y < grid.size; y++){
 	  if(grid.cells[x][y]){
 	    // subtract this cell's value squared, so 4 is favored to two 2's
-	    entropy -= Math.pow(grid.cells[x][y].value, 2);
+	    //entropy -= Math.pow(grid.cells[x][y].value, 2);
 
 	    // keep track of max value
 	    if(grid.cells[x][y].value > maxTile){
@@ -432,11 +439,15 @@ GameManager.prototype.calculateEntropies = function (grids) {
 	    // sum adjacent cells squared distances
 	    if(y < grid.size - 1 && grid.cells[x][y + 1]){
 	      entropy += Math.pow(grid.cells[x][y].value - grid.cells[x][y + 1].value, 2);
+	      if(grid.cells[x][y + 1].value > grid.cells[x][y].value)
+		monotonicity += 1;
 	      // if(grid.cells[x][y].value == grid.cells[x][y + 1].value)
 	      // 	entropy -= Math.exp(grid.cells[x][y].value);
 	    }
 	    if(x < grid.size - 1 && grid.cells[x + 1][y]){
 	      entropy += Math.pow(grid.cells[x][y].value - grid.cells[x + 1][y].value, 2);
+	      if(grid.cells[x + 1][y].value > grid.cells[x][y].value)
+		monotonicity += 1;
 	      // if(grid.cells[x][y].value == grid.cells[x + 1][y].value)
 	      // 	entropy -= Math.exp(grid.cells[x][y].value);
 	    }
@@ -461,15 +472,21 @@ GameManager.prototype.calculateEntropies = function (grids) {
       // keep track of cells available
       cellsAvailable = grid.cellsAvailable();
 
-      // if the biggest tile isn't on a corner, freak out
-      if(!(maxLoc.x == 0 && maxLoc.y == 0) && 
-	 !(maxLoc.x == 0 && maxLoc.y == grid.size) && 
-	 !(maxLoc.x == grid.size && maxLoc.y == 0) && 
-	 !(maxLoc.x == grid.size && maxLoc.y == grid.size))
-	entropy = Math.pow(entropy,2);
+      // weight entropy and monotonicity so we can compare them
+      if(entropy > monotonicity){
+	entropy /= entropy;
+	monotonicity /= entropy;
+      } else {
+	entropy /= monotonicity;
+	monotonicity /= monotonicity;
+      }
 
       // entropy for this direction, could also use total, maxTile, cellsAvailable, or others
-      entropies[dir] = entropy;
+      entropies[dir] = 0.4*entropy + 0.6*monotonicity;
+
+      // if the biggest tile isn't on a corner, freak out
+      if(!(maxLoc.x == 0 && maxLoc.y == 0))
+	entropies[dir] = Infinity;
     } 
   }
   
