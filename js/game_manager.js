@@ -412,7 +412,7 @@ GameManager.prototype.calculateEntropies = function (grids) {
     // not all directions yield new grids
     if(grid){
       // initializations for this direction
-      var entropy = 0;
+      var smoothness = 0;
       var total = 0;
       var maxTile = -Infinity;
       var maxLoc = {};
@@ -424,7 +424,7 @@ GameManager.prototype.calculateEntropies = function (grids) {
 	for(var y = 0; y < grid.size; y++){
 	  if(grid.cells[x][y]){
 	    // subtract this cell's value squared, so 4 is favored to two 2's
-	    //entropy -= Math.pow(grid.cells[x][y].value, 2);
+	    //smoothness -= Math.pow(grid.cells[x][y].value, 2);
 
 	    // keep track of max value
 	    if(grid.cells[x][y].value > maxTile){
@@ -438,33 +438,33 @@ GameManager.prototype.calculateEntropies = function (grids) {
 
 	    // sum adjacent cells squared distances
 	    if(y < grid.size - 1 && grid.cells[x][y + 1]){
-	      entropy += Math.pow(grid.cells[x][y].value - grid.cells[x][y + 1].value, 2);
+	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x][y + 1].value, 2);
 	      if(grid.cells[x][y + 1].value > grid.cells[x][y].value)
 		monotonicity += 1;
 	      // if(grid.cells[x][y].value == grid.cells[x][y + 1].value)
-	      // 	entropy -= Math.exp(grid.cells[x][y].value);
+	      // 	smoothness -= Math.exp(grid.cells[x][y].value);
 	    }
 	    if(x < grid.size - 1 && grid.cells[x + 1][y]){
-	      entropy += Math.pow(grid.cells[x][y].value - grid.cells[x + 1][y].value, 2);
+	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x + 1][y].value, 2);
 	      if(grid.cells[x + 1][y].value > grid.cells[x][y].value)
 		monotonicity += 1;
 	      // if(grid.cells[x][y].value == grid.cells[x + 1][y].value)
-	      // 	entropy -= Math.exp(grid.cells[x][y].value);
+	      // 	smoothness -= Math.exp(grid.cells[x][y].value);
 	    }
 	    if(y > 0 && grid.cells[x][y - 1]){
-	      entropy += Math.pow(grid.cells[x][y].value - grid.cells[x][y - 1].value, 2);
+	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x][y - 1].value, 2);
 	      // if(grid.cells[x][y].value == grid.cells[x][y - 1].value)
-	      // 	entropy -= Math.exp(grid.cells[x][y].value);
+	      // 	smoothness -= Math.exp(grid.cells[x][y].value);
 	    }
 	    if(x > 0 && grid.cells[x - 1][y]){
-	      entropy += Math.pow(grid.cells[x][y].value - grid.cells[x - 1][y].value, 2);
+	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x - 1][y].value, 2);
 	      // if(grid.cells[x][y].value == grid.cells[x - 1][y].value)
-	      // 	entropy -= Math.exp(grid.cells[x][y].value);
+	      // 	smoothness -= Math.exp(grid.cells[x][y].value);
 	    }
 
 	    // take away the value of a cell if it is on the edge
 	    // if(x == 0 || x == grid.size || y == 0 || y == grid.size)
-	    //   entropy -= grid.cells[x][y].value;
+	    //   smoothness -= grid.cells[x][y].value;
 	  }
 	}
       }
@@ -472,17 +472,17 @@ GameManager.prototype.calculateEntropies = function (grids) {
       // keep track of cells available
       cellsAvailable = grid.cellsAvailable();
 
-      // weight entropy and monotonicity so we can compare them
-      if(entropy > monotonicity){
-	entropy /= entropy;
-	monotonicity /= entropy;
+      // weight smoothness and monotonicity so we can compare them
+      if(smoothness > monotonicity){
+	smoothness /= smoothness;
+	monotonicity /= smoothness;
       } else {
-	entropy /= monotonicity;
+	smoothness /= monotonicity;
 	monotonicity /= monotonicity;
       }
 
       // entropy for this direction, could also use total, maxTile, cellsAvailable, or others
-      entropies[dir] = 0.4*entropy + 0.6*monotonicity;
+      entropies[dir] = 0.3*smoothness + 0.7*monotonicity;
 
       // if the biggest tile isn't on a corner, freak out
       if(!(maxLoc.x == 0 && maxLoc.y == 0))
