@@ -69,10 +69,10 @@ GameManager.prototype.addStartTiles = function () {
 };
 
 // Adds a tile in the top left (worst case addRandomTile)
-GameManager.prototype.addTopLeftTile = function(grid) {
+GameManager.prototype.addTileXY = function(grid, x, y) {
   if(grid.cellsAvailable()) {
     var value = Math.random() < 0.9 ? 2 : 4;
-    var tile = new Tile({x: 0, y: 0}, value);
+    var tile = new Tile({x: x, y: y}, value);
 
     grid.insertTile(tile);
   }
@@ -300,31 +300,42 @@ var DIRECTIONS = {
 };
 
 GameManager.prototype.makeMove = function () {
-  var gridTree = this.generateMoveChildren(this.grid, 0, 5);
-  this.findMinInTree(gridTree, 0, 5);
-  this.move(gridTree.leastDirection);
-  console.log('moved ' + DIRECTIONS[gridTree.leastDirection]);
+  var depth = 5;
+  var gridTree = this.generateMoveChildren(this.grid, 0, depth);
+  this.findMinInTree(gridTree, 0, depth);
+  var dir = gridTree.leastDirection;
+  for(var i = 0; i < depth-4; i++){
+    if(dir == -1){
+      var dirs = [0, 3, 2, 1], i = 0;
+      for(dir = dirs[i]; i < 4; dir = dirs[++i]){
+	if(gridTree[dir]){
+	  this.move(dir);
+	  break;
+	}
+      }
+      break;
+    }
+
+    this.move(dir);
+    //console.log('moved ' + DIRECTIONS[gridTree.leastDirection]);
+    if(gridTree[dir]){
+      dir = gridTree[dir].leastDirection;
+    } else {
+      break;
+    }
+  }
 };
 
 GameManager.prototype.findMinInTree = function (grid, depth, maxDepth) {
   if(depth < maxDepth){
-    for(var d = 0; d < 4; d++){
-      if(grid[d] !== undefined){
-	this.findMinInTree(grid[d], depth+1, maxDepth);
-	if(grid[d].leastEntropy < grid.leastEntropy){
-	  grid.leastEntropy = grid[d].leastEntropy;
-	  grid.leastDirection = d;
+    var dirs = [0, 3, 2, 1], i = 0, dir;
+    for(dir = dirs[i]; i < 4; dir = dirs[++i]){
+      if(grid[dir] !== undefined){
+	this.findMinInTree(grid[dir], depth+1, maxDepth);
+	if(grid[dir].leastEntropy < grid.leastEntropy){
+	  grid.leastEntropy = grid[dir].leastEntropy;
+	  grid.leastDirection = dir;
 	}
-      }
-    }
-  }
-  
-  // if we can't put the biggest at the top left, try
-  // top, left, right, up in that order
-  if(depth == 0 && grid.leastDirection == -1){
-    for(var dir = 0; dir < 4; dir++){
-      if(grid[dir]){
-	grid.leastDirection = dir;
       }
     }
   }
@@ -412,7 +423,9 @@ GameManager.prototype.generateGrid = function (direction, currentGridState) {
   ret = moved ? newGrid : false;
   if(ret){
     if(newGrid.cellAvailable({x: 0, y: 0})){
-      this.addTopLeftTile(newGrid);
+      this.addTileXY(newGrid, 0, 0);
+    } else if(newGrid.cellAvailable({x: 1, y: 0})){
+      this.addTileXY(newGrid, 1, 0);
     } else {
       this.addRandomTile(newGrid);
     }
@@ -431,81 +444,98 @@ GameManager.prototype.calculateEntropies = function (grids) {
     // not all directions yield new grids
     if(grid){
       // initializations for this direction
-      var smoothness = 0;
+      // smoothness, monotonicity, and count are strictly incremented,
+      // and only in BAD cases, because we are minimizing entropy
+      var smoothness = 0; 
+      var monotonicity = 0;
+      var count = 0;
       var total = 0;
       var maxTile = -Infinity;
       var maxLoc = {};
-      var cellsAvailable = 0;
-      var monotonicity = 0;
 
       // for each cell
       for(var x = 0; x < grid.size; x++){
 	for(var y = 0; y < grid.size; y++){
 	  if(grid.cells[x][y]){
-	    // subtract this cell's value squared, so 4 is favored to two 2's
-	    //smoothness -= Math.pow(grid.cells[x][y].value, 2);
+	    // sum square of cell's value into total, so 4 helps entropy more than two 2's
+	    total += Math.pow(grid.cells[x][y].value, 2);	    
 
-	    // keep track of max value
+	    // increment count
+	    count += 1;
+
+	    // keep track of max value for monotonicity
 	    if(grid.cells[x][y].value > maxTile){
 	      maxTile = grid.cells[x][y].value;
 	      maxLoc.x = x;
 	      maxLoc.y = y;
 	    }
 
-	    // keep track of total value
-	    total += grid.cells[x][y].value;
+	    // smoothness is the sum of adjacent cells squared distances (big differences == bad)
+	    // monotonicity is the sum of adjacent cells differences subtracted from the larger cell,
+	    // if they are monotonically increasing down and to the right (monotonic down and right == bad)
 
-	    // sum adjacent cells squared distances
+	    // cell down
 	    if(y < grid.size - 1 && grid.cells[x][y + 1]){
-	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x][y + 1].value, 2);
-	      if(grid.cells[x][y + 1].value > grid.cells[x][y].value)
-		monotonicity += grid.cells[x][y].value - (grid.cells[x][y].value - grid.cells[x][y + 1].value);
-	      // if(grid.cells[x][y].value == grid.cells[x][y + 1].value)
-	      // 	smoothness -= Math.exp(grid.cells[x][y].value);
-	    }
-	    if(x < grid.size - 1 && grid.cells[x + 1][y]){
-	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x + 1][y].value, 2);
-	      if(grid.cells[x + 1][y].value > grid.cells[x][y].value)
-		monotonicity += grid.cells[x][y].value - (grid.cells[x][y].value - grid.cells[x + 1][y].value);
-	      // if(grid.cells[x][y].value == grid.cells[x + 1][y].value)
-	      // 	smoothness -= Math.exp(grid.cells[x][y].value);
-	    }
-	    if(y > 0 && grid.cells[x][y - 1]){
-	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x][y - 1].value, 2);
-	      // if(grid.cells[x][y].value == grid.cells[x][y - 1].value)
-	      // 	smoothness -= Math.exp(grid.cells[x][y].value);
-	    }
-	    if(x > 0 && grid.cells[x - 1][y]){
-	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x - 1][y].value, 2);
-	      // if(grid.cells[x][y].value == grid.cells[x - 1][y].value)
-	      // 	smoothness -= Math.exp(grid.cells[x][y].value);
+	      // always smoothness
+	      smoothness += Math.pow(grid.cells[x][y + 1].value - grid.cells[x][y].value, 2);
+
+	      // always monotonicity
+	      if(grid.cells[x][y + 1].value > grid.cells[x][y].value){
+	      	monotonicity += Math.pow(grid.cells[x][y + 1].value - grid.cells[x][y].value, 2);
+	      }
+
+	      // // gradient up for bottom three, and leftmost of right
+	      // if((y > 0 || (y == 0 && x == 0)) && grid.cells[x][y + 1].value > grid.cells[x][y].value){
+	      // 	monotonicity += Math.pow(grid.cells[x][y + 1].value - grid.cells[x][y].value, 2);
+	      // }
 	    }
 
-	    // take away the value of a cell if it is on the edge
-	    // if(x == 0 || x == grid.size || y == 0 || y == grid.size)
-	    //   smoothness -= grid.cells[x][y].value;
+	    // cell right
+	    if(x < grid.size - 1 && grid.cells[x + 1][y]){
+	      // always smoothness
+	      smoothness += Math.pow(grid.cells[x + 1][y].value - grid.cells[x][y].value, 2);
+
+	      // always monotonicity
+	      if(grid.cells[x + 1][y].value > grid.cells[x][y].value){
+	      	monotonicity += Math.pow(grid.cells[x + 1][y].value - grid.cells[x][y].value, 2);
+	      }
+
+	      // // gradient left for bottom three rows
+	      // if(y > 0 && grid.cells[x + 1][y].value > grid.cells[x][y].value){
+	      // 	monotonicity += Math.pow(grid.cells[x + 1][y].value - grid.cells[x][y].value, 2);
+	      // }
+	    }
+
+	    // cell up
+	    if(y > 0 && grid.cells[x][y - 1]){
+	      // always smoothness
+	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x][y - 1].value, 2);
+	    }
+
+	    // cell left
+	    if(x > 0 && grid.cells[x - 1][y]){
+	      // always smoothness
+	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x - 1][y].value, 2);
+
+	      // // gradient right for top row, after we get a 512
+	      // if(y == 0 && grid.cells[x - 1][y].value > grid.cells[x][y].value){
+	      // 	monotonicity += Math.pow(grid.cells[x - 1][y].value - grid.cells[x][y].value, 2);
+	      // }
+	    }
 	  }
 	}
       }
 
-      // keep track of cells available
-      cellsAvailable = grid.cellsAvailable();
-
-      // weight smoothness and monotonicity so we can compare them
-      if(smoothness > monotonicity){
-	monotonicity /= smoothness;
-	smoothness /= smoothness;
-      } else {
-	smoothness /= monotonicity;
-	monotonicity /= monotonicity;
-      }
-
       // entropy for this direction, could also use total, maxTile, cellsAvailable, or others
-      entropies[dir] = 0.4*smoothness + 0.6*monotonicity;
+      //console.log({smoothness: smoothness, monotonicity: monotonicity, count: count, maxTile: maxTile, total: total});
+      var sum = smoothness + monotonicity + count - Math.pow(maxTile, 4) - total;
+      var max = Math.max(smoothness, monotonicity, count, Math.pow(maxTile, 4), total);
+      entropies[dir] = sum / max;
 
-      // if the biggest tile isn't on a corner, freak out
-      if(maxLoc.x != 0 || maxLoc.y != 0)
+      // if the biggest tile isn't on top right corner, freak out
+      if(maxLoc.x != 0 || maxLoc.y != 0){
 	entropies[dir] = Infinity;
+      }
     } 
   }
   
