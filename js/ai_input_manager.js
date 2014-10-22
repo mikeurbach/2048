@@ -14,7 +14,7 @@ function AIInputManager() {
 
   this.listen();
 
-  setInterval((function(){ this.emit("move"); }).bind(this), 1000);
+  setInterval((function(){ this.emit("move"); }).bind(this), 1);
 }
 
 AIInputManager.prototype.on = function (event, callback) {

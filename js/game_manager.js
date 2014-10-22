@@ -43,12 +43,16 @@ GameManager.prototype.setup = function () {
     this.over        = previousState.over;
     this.won         = previousState.won;
     this.keepPlaying = previousState.keepPlaying;
+    this.temperature = previousState.temperature;
+    this.didntMove   = previousState.didntMove;
   } else {
     this.grid        = new Grid(this.size);
     this.score       = 0;
     this.over        = false;
     this.won         = false;
     this.keepPlaying = false;
+    this.temperature = 100;
+    this.didntMove   = 0;
 
     // Add the initial tiles
     this.addStartTiles();
@@ -56,9 +60,6 @@ GameManager.prototype.setup = function () {
 
   // Update the actuator
   this.actuate();
-
-  // Make a move every second
-  
 };
 
 // Set up the initial tiles to start the game with
@@ -118,7 +119,8 @@ GameManager.prototype.serialize = function () {
     score:       this.score,
     over:        this.over,
     won:         this.won,
-    keepPlaying: this.keepPlaying
+    keepPlaying: this.keepPlaying,
+    temperature: this.temperature
   };
 };
 
@@ -299,26 +301,60 @@ var DIRECTIONS = {
   3: 'left'
 };
 
+GameManager.prototype.makeMoveSA = function () {
+  var old_entropy = this.calculateEntropies({0: this.grid})[0];
+  var grids = this.generateGrids(this.grid.serialize());
+  var newGrid = this.pickBestGrid(grids);
+  if(newGrid){
+    if(newGrid.entropy == Infinity){
+      var dirs = [0, 3, 2, 1], i = 0;
+      for(dir = dirs[i]; i < 4; dir = dirs[++i]){
+	if(grids[dir]){
+	  this.move(dir);
+	  break;
+	}
+      }
+    } else if(newGrid.entropy < old_entropy || 
+	      Math.random() < Math.exp(- (newGrid.entropy - old_entropy) / this.temperature)){ // M-H
+	this.move(newGrid.dir);
+    }
+
+    this.temperature -= 1;
+  }
+}
+
 GameManager.prototype.makeMove = function () {
   var depth = 5;
   var gridTree = this.generateMoveChildren(this.grid, 0, depth);
   this.findMinInTree(gridTree, 0, depth);
   var dir = gridTree.leastDirection;
-  for(var i = 0; i < depth-4; i++){
-    if(dir == -1){
+  var entropy = gridTree.leastEntropy;
+  for(var i = 0; i < depth-(depth-2); i++){ // only go down 1 for now, could be up to 4
+    if(dir == -1 || this.didntMove > 0){
       var dirs = [0, 3, 2, 1], i = 0;
       for(dir = dirs[i]; i < 4; dir = dirs[++i]){
 	if(gridTree[dir]){
 	  this.move(dir);
+	  this.didntMove = 0;
 	  break;
 	}
       }
       break;
     }
 
-    this.move(dir);
-    //console.log('moved ' + DIRECTIONS[gridTree.leastDirection]);
+    var current_entropy = this.calculateEntropies({0: this.grid})[0];
+    if(entropy < current_entropy || Math.random() < Math.exp(-(entropy - current_entropy) / this.temperature)){
+      this.move(dir);
+    } else {
+      this.didntMove += 1;
+    }
+
+    //console.log('moved ' + DIRECTIONS[dir]);
+
+    // update for next loop
+    this.temperature *= 0.95;
     if(gridTree[dir]){
+      entropy = gridTree[dir].leastEntropy;
       dir = gridTree[dir].leastDirection;
     } else {
       break;
@@ -434,6 +470,19 @@ GameManager.prototype.generateGrid = function (direction, currentGridState) {
   return ret;
 };
 
+GameManager.prototype.pickBestGrid = function (grids) {
+  best = Infinity;
+  bestDir = -1;
+  var entropies = this.calculateEntropies(grids);
+  for(var dir = 0; dir < 4; dir++){
+    if(entropies[dir] && entropies[dir] < best){
+      best = entropies[dir];
+      bestDir = dir;
+    }
+  }
+  return {dir: bestDir, entropy: best};
+};
+
 GameManager.prototype.calculateEntropies = function (grids) {
   var entropies = {}
 
@@ -477,7 +526,12 @@ GameManager.prototype.calculateEntropies = function (grids) {
 	    // cell down
 	    if(y < grid.size - 1 && grid.cells[x][y + 1]){
 	      // always smoothness
-	      smoothness += Math.pow(grid.cells[x][y + 1].value - grid.cells[x][y].value, 2);
+	      var smooth = grid.cells[x][y + 1].value - grid.cells[x][y].value;
+	      smoothness += Math.pow(smooth, 2);
+
+	      // if(smooth == 0){
+	      // 	smoothness -= Math.pow(2*grid.cells[x][y].value, 2);
+	      // }
 
 	      // always monotonicity
 	      if(grid.cells[x][y + 1].value > grid.cells[x][y].value){
@@ -493,7 +547,12 @@ GameManager.prototype.calculateEntropies = function (grids) {
 	    // cell right
 	    if(x < grid.size - 1 && grid.cells[x + 1][y]){
 	      // always smoothness
-	      smoothness += Math.pow(grid.cells[x + 1][y].value - grid.cells[x][y].value, 2);
+	      var smooth = grid.cells[x + 1][y].value - grid.cells[x][y].value;
+	      smoothness += Math.pow(smooth, 2);
+
+	      // if(smooth == 0){
+	      // 	smoothness -= Math.pow(2*grid.cells[x][y].value, 2);
+	      // }
 
 	      // always monotonicity
 	      if(grid.cells[x + 1][y].value > grid.cells[x][y].value){
@@ -509,13 +568,23 @@ GameManager.prototype.calculateEntropies = function (grids) {
 	    // cell up
 	    if(y > 0 && grid.cells[x][y - 1]){
 	      // always smoothness
-	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x][y - 1].value, 2);
+	      var smooth = grid.cells[x][y].value - grid.cells[x][y - 1].value;
+	      smoothness += Math.pow(smooth, 2);
+
+	      // if(smooth == 0){
+	      // 	smoothness -= Math.pow(2*grid.cells[x][y].value, 2);
+	      // }
 	    }
 
 	    // cell left
 	    if(x > 0 && grid.cells[x - 1][y]){
 	      // always smoothness
+	      var smooth = grid.cells[x][y].value - grid.cells[x - 1][y].value;
 	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x - 1][y].value, 2);
+
+	      // if(smooth == 0){
+	      // 	smoothness -= Math.pow(2*grid.cells[x][y].value, 2);
+	      // }
 
 	      // // gradient right for top row, after we get a 512
 	      // if(y == 0 && grid.cells[x - 1][y].value > grid.cells[x][y].value){
@@ -530,6 +599,8 @@ GameManager.prototype.calculateEntropies = function (grids) {
       //console.log({smoothness: smoothness, monotonicity: monotonicity, count: count, maxTile: maxTile, total: total});
       var sum = smoothness + monotonicity + count - Math.pow(maxTile, 4) - total;
       var max = Math.max(smoothness, monotonicity, count, Math.pow(maxTile, 4), total);
+      // var sum = smoothness + monotonicity + count;
+      // var max = Math.max(smoothness, monotonicity, count);
       entropies[dir] = sum / max;
 
       // if the biggest tile isn't on top right corner, freak out
