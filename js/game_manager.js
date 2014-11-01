@@ -311,17 +311,15 @@ GameManager.prototype.train = function() {
   console.log('train - called');
 
   // initialize replay memory
-  this.D = Immutable.Set.empty();
+  this.D = [];
 
   // initialize Q network
-  this.Q = new Q();
+  this.Q = new Q(16, [260, 500, 1]);
 
   // run M training episodes
   for(var episode = 0; episode < M; episode++){
     // initialize sequence and preprocess phi
-    var sequence = Immutable.Vector
-      .empty()
-      .set(0, this.grid.toVector());
+    var sequence = this.grid.toVector();
     var phi = this.Q.preprocess(sequence);
 
     // run T moves
@@ -381,21 +379,25 @@ GameManager.prototype.bestMove = function(phi){
 
   // pick the locally optimal move based on our current Q network
   var moves = [0,1,2,3];
-  var move, score;
+  var score = null;
+  var move, newGrid;
   while(moves.length > 0){
     move = moves.shift();
-    score = this.Q.score(phi, move);
-    if(score > bestScore){
-      bestMove = move;
-      bestScore = score;
+
+    // ensure this move is valid
+    newGrid = this.generateGrid(move, this.grid.serialize());
+    if(newGrid){
+      score = this.Q.score(phi, move);
+      if(score > bestScore){
+	bestMove = move;
+	bestScore = score;
+      }
     }
   }
 
-  // ensure this move is valid
-  var newGrid = this.generateGrid(move, this.grid.serialize());
 
   // return the optimal move
-  return {newGrid: newGrid, move: move};
+  return {newGrid: score != null, move: bestMove};
 };
 
 // helpers

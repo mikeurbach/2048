@@ -117,7 +117,7 @@ Grid.prototype.serialize = function () {
 };
 
 Grid.prototype.toVector = function(){
-  var vector = Immutable.Vector.empty();
+  var vector = math.zeros(this.cells.length * this.cells.length);
 
   for(var i = 0; i < this.cells.length; i++){
     for(var j = 0; j < this.cells[i].length; j++){
@@ -128,7 +128,7 @@ Grid.prototype.toVector = function(){
       } else {
 	value = tile.value;
       }
-      vector = vector.push(value);
+      vector.subset(math.index(i * this.cells.length + j), value);
     }
   }
 
