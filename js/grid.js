@@ -115,3 +115,22 @@ Grid.prototype.serialize = function () {
     cells: cellState
   };
 };
+
+Grid.prototype.toVector = function(){
+  var vector = Immutable.Vector.empty();
+
+  for(var i = 0; i < this.cells.length; i++){
+    for(var j = 0; j < this.cells[i].length; j++){
+      var tile = this.cells[i][j];
+      var value;
+      if(!tile){
+	value = 0;
+      } else {
+	value = tile.value;
+      }
+      vector = vector.push(value);
+    }
+  }
+
+  return vector;
+}

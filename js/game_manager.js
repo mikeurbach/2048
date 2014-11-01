@@ -6,6 +6,7 @@ function GameManager(size, InputManager, Actuator, StorageManager) {
 
   this.startTiles     = 2;
 
+  this.inputManager.on("train", this.train.bind(this));
   this.inputManager.on("move", this.makeMove.bind(this));
   this.inputManager.on("restart", this.restart.bind(this));
   this.inputManager.on("keepPlaying", this.keepPlaying.bind(this));
@@ -18,6 +19,7 @@ GameManager.prototype.restart = function () {
   this.storageManager.clearGameState();
   this.actuator.continueGame(); // Clear the game won/lost message
   this.setup();
+  this.train();
 };
 
 // Keep playing after winning (allows going over 2048)
@@ -301,117 +303,102 @@ var DIRECTIONS = {
   3: 'left'
 };
 
-GameManager.prototype.makeMoveSA = function () {
-  var old_entropy = this.calculateEntropies({0: this.grid})[0];
-  var grids = this.generateGrids(this.grid.serialize());
-  var newGrid = this.pickBestGrid(grids);
-  if(newGrid){
-    if(newGrid.entropy == Infinity){
-      var dirs = [0, 3, 2, 1], i = 0;
-      for(dir = dirs[i]; i < 4; dir = dirs[++i]){
-	if(grids[dir]){
-	  this.move(dir);
-	  break;
-	}
-      }
-    } else if(newGrid.entropy < old_entropy || 
-	      Math.random() < Math.exp(- (newGrid.entropy - old_entropy) / this.temperature)){ // M-H
-	this.move(newGrid.dir);
-    }
+var M = 1;
+var T = 10;
+var EPSILON = 0;
 
-    this.temperature -= 1;
+GameManager.prototype.train = function() {
+  console.log('train - called');
+
+  // initialize replay memory
+  this.D = Immutable.Set.empty();
+
+  // initialize Q network
+  this.Q = new Q();
+
+  // run M training episodes
+  for(var episode = 0; episode < M; episode++){
+    // initialize sequence and preprocess phi
+    var sequence = Immutable.Vector
+      .empty()
+      .set(0, this.grid.toVector());
+    var phi = this.Q.preprocess(sequence);
+
+    // run T moves
+    for(var t = 0; t < T; t++){
+      // behavior distribution (epsilon-greedy strategy)
+      var action;
+      if(Math.random() < EPSILON){
+	// select a random action with probability EPSILON
+	console.log("train - picking random move");
+	action = this.randomMove();
+      } else {
+	// select the Q network's idea of the best action
+	console.log("train - picking Q network's favorite move");
+	action = this.bestMove(phi);
+      }
+
+      // execute action in the emulator, if we're not in a terminal state
+      console.log("train - moving: " + DIRECTIONS[action.move]);
+      if(action.newGrid){
+	this.move(action.move);
+      }
+    }
   }
 }
 
 GameManager.prototype.makeMove = function () {
-  var depth = 5;
-  var gridTree = this.generateMoveChildren(this.grid, 0, depth);
-  this.findMinInTree(gridTree, 0, depth);
-  var dir = gridTree.leastDirection;
-  var entropy = gridTree.leastEntropy;
-  for(var i = 0; i < depth-(depth-2); i++){ // only go down 1 for now, could be up to 4
-    if(dir == -1 || this.didntMove > 0){
-      var dirs = [0, 3, 2, 1], i = 0;
-      for(dir = dirs[i]; i < 4; dir = dirs[++i]){
-	if(gridTree[dir]){
-	  this.move(dir);
-	  this.didntMove = 0;
-	  break;
-	}
-      }
-      break;
-    }
+  console.log('makeMove - called');
+};
 
-    var current_entropy = this.calculateEntropies({0: this.grid})[0];
-    if(entropy < current_entropy || Math.random() < Math.exp(-(entropy - current_entropy) / this.temperature)){
-      this.move(dir);
+GameManager.prototype.randomMove = function(){
+  // order the possible moves randomly
+  var moves = shuffle([0,1,2,3]);
+  var move;
+  var madeMove = false;
+
+  // while we have moves to try
+  while(moves.length > 0 && !madeMove){
+    // take a move
+    move = moves.shift();
+    newGrid = this.generateGrid(move, this.grid.serialize());
+
+    if(!newGrid){
+      // if we couldn't move, set newGrid to false
+      newGrid = false;
     } else {
-      this.didntMove += 1;
-    }
-
-    //console.log('moved ' + DIRECTIONS[dir]);
-
-    // update for next loop
-    this.temperature *= 0.95;
-    if(gridTree[dir]){
-      entropy = gridTree[dir].leastEntropy;
-      dir = gridTree[dir].leastDirection;
-    } else {
-      break;
+      // if we could move set the flag
+      madeMove = true;
     }
   }
+
+  // return the latest move
+  return {newGrid: newGrid, move: move};
 };
 
-GameManager.prototype.findMinInTree = function (grid, depth, maxDepth) {
-  if(depth < maxDepth){
-    var dirs = [0, 3, 2, 1], i = 0, dir;
-    for(dir = dirs[i]; i < 4; dir = dirs[++i]){
-      if(grid[dir] !== undefined){
-	this.findMinInTree(grid[dir], depth+1, maxDepth);
-	if(grid[dir].leastEntropy < grid.leastEntropy){
-	  grid.leastEntropy = grid[dir].leastEntropy;
-	  grid.leastDirection = dir;
-	}
-      }
+GameManager.prototype.bestMove = function(phi){
+  var bestMove = false, bestScore = -Infinity;
+
+  // pick the locally optimal move based on our current Q network
+  var moves = [0,1,2,3];
+  var move, score;
+  while(moves.length > 0){
+    move = moves.shift();
+    score = this.Q.score(phi, move);
+    if(score > bestScore){
+      bestMove = move;
+      bestScore = score;
     }
   }
-}
 
-GameManager.prototype.generateMoveChildren = function (grid, depth, maxDepth) {
-  // set the best entropy on the grid
-  var grids = this.generateGrids(grid.serialize());
-  var entropies = this.calculateEntropies(grids);
-  var entropyVals = this.chooseLeastEntropy(entropies);
-  grid.leastEntropy = entropyVals.entropy;
-  grid.leastDirection = entropyVals.dir;
+  // ensure this move is valid
+  var newGrid = this.generateGrid(move, this.grid.serialize());
 
-  // if not a child, recurse
-  if(depth < maxDepth){
-    for(var d = 0; d < 4; d++){
-      if(grids[d] !== undefined){
-	grid[d] = grids[d];
-	this.generateMoveChildren(grid[d], depth+1, maxDepth);
-      } else {
-	delete grid[d]; // weird?
-      }
-    }
-  } 
-
-  // return the grid if we're root
-  if(depth == 0){
-    return grid;
-  }
+  // return the optimal move
+  return {newGrid: newGrid, move: move};
 };
 
-GameManager.prototype.generateGrids = function (currentGridState) {
-  var grids = {};
-  for(var dir = 0; dir < 4; dir++){
-    var newGrid = this.generateGrid(dir, currentGridState);
-    if(newGrid)
-      grids[dir] = newGrid;
-  }
-  return grids;
-};
+// helpers
 
 GameManager.prototype.generateGrid = function (direction, currentGridState) {
   // 0: up, 1: right, 2: down, 3: left
@@ -456,173 +443,32 @@ GameManager.prototype.generateGrid = function (direction, currentGridState) {
     });
   });
 
-  ret = moved ? newGrid : false;
-  if(ret){
-    if(newGrid.cellAvailable({x: 0, y: 0})){
-      this.addTileXY(newGrid, 0, 0);
-    } else if(newGrid.cellAvailable({x: 1, y: 0})){
-      this.addTileXY(newGrid, 1, 0);
-    } else {
-      this.addRandomTile(newGrid);
-    }
+  var ret;
+  if (moved) {
+    this.addRandomTile(newGrid);
+    ret = newGrid;
+  } else {
+    ret = false;
   }
 
   return ret;
 };
 
-GameManager.prototype.pickBestGrid = function (grids) {
-  best = Infinity;
-  bestDir = -1;
-  var entropies = this.calculateEntropies(grids);
-  for(var dir = 0; dir < 4; dir++){
-    if(entropies[dir] && entropies[dir] < best){
-      best = entropies[dir];
-      bestDir = dir;
-    }
-  }
-  return {dir: bestDir, entropy: best};
-};
+// http://bost.ocks.org/mike/shuffle/
+function shuffle(array) {
+  var m = array.length, t, i;
 
-GameManager.prototype.calculateEntropies = function (grids) {
-  var entropies = {}
+  // While there remain elements to shuffle…
+  while (m) {
 
-  // for each direction
-  for(var dir = 0; dir < 4; dir++){
-    var grid = grids[dir];
-    
-    // not all directions yield new grids
-    if(grid){
-      // initializations for this direction
-      // smoothness, monotonicity, and count are strictly incremented,
-      // and only in BAD cases, because we are minimizing entropy
-      var smoothness = 0; 
-      var monotonicity = 0;
-      var count = 0;
-      var total = 0;
-      var maxTile = -Infinity;
-      var maxLoc = {};
+    // Pick a remaining element…
+    i = Math.floor(Math.random() * m--);
 
-      // for each cell
-      for(var x = 0; x < grid.size; x++){
-	for(var y = 0; y < grid.size; y++){
-	  if(grid.cells[x][y]){
-	    // sum square of cell's value into total, so 4 helps entropy more than two 2's
-	    total += Math.pow(grid.cells[x][y].value, 2);	    
-
-	    // increment count
-	    count += 1;
-
-	    // keep track of max value for monotonicity
-	    if(grid.cells[x][y].value > maxTile){
-	      maxTile = grid.cells[x][y].value;
-	      maxLoc.x = x;
-	      maxLoc.y = y;
-	    }
-
-	    // smoothness is the sum of adjacent cells squared distances (big differences == bad)
-	    // monotonicity is the sum of adjacent cells differences subtracted from the larger cell,
-	    // if they are monotonically increasing down and to the right (monotonic down and right == bad)
-
-	    // cell down
-	    if(y < grid.size - 1 && grid.cells[x][y + 1]){
-	      // always smoothness
-	      var smooth = grid.cells[x][y + 1].value - grid.cells[x][y].value;
-	      smoothness += Math.pow(smooth, 2);
-
-	      // if(smooth == 0){
-	      // 	smoothness -= Math.pow(2*grid.cells[x][y].value, 2);
-	      // }
-
-	      // always monotonicity
-	      if(grid.cells[x][y + 1].value > grid.cells[x][y].value){
-	      	monotonicity += Math.pow(grid.cells[x][y + 1].value - grid.cells[x][y].value, 2);
-	      }
-
-	      // // gradient up for bottom three, and leftmost of right
-	      // if((y > 0 || (y == 0 && x == 0)) && grid.cells[x][y + 1].value > grid.cells[x][y].value){
-	      // 	monotonicity += Math.pow(grid.cells[x][y + 1].value - grid.cells[x][y].value, 2);
-	      // }
-	    }
-
-	    // cell right
-	    if(x < grid.size - 1 && grid.cells[x + 1][y]){
-	      // always smoothness
-	      var smooth = grid.cells[x + 1][y].value - grid.cells[x][y].value;
-	      smoothness += Math.pow(smooth, 2);
-
-	      // if(smooth == 0){
-	      // 	smoothness -= Math.pow(2*grid.cells[x][y].value, 2);
-	      // }
-
-	      // always monotonicity
-	      if(grid.cells[x + 1][y].value > grid.cells[x][y].value){
-	      	monotonicity += Math.pow(grid.cells[x + 1][y].value - grid.cells[x][y].value, 2);
-	      }
-
-	      // // gradient left for bottom three rows
-	      // if(y > 0 && grid.cells[x + 1][y].value > grid.cells[x][y].value){
-	      // 	monotonicity += Math.pow(grid.cells[x + 1][y].value - grid.cells[x][y].value, 2);
-	      // }
-	    }
-
-	    // cell up
-	    if(y > 0 && grid.cells[x][y - 1]){
-	      // always smoothness
-	      var smooth = grid.cells[x][y].value - grid.cells[x][y - 1].value;
-	      smoothness += Math.pow(smooth, 2);
-
-	      // if(smooth == 0){
-	      // 	smoothness -= Math.pow(2*grid.cells[x][y].value, 2);
-	      // }
-	    }
-
-	    // cell left
-	    if(x > 0 && grid.cells[x - 1][y]){
-	      // always smoothness
-	      var smooth = grid.cells[x][y].value - grid.cells[x - 1][y].value;
-	      smoothness += Math.pow(grid.cells[x][y].value - grid.cells[x - 1][y].value, 2);
-
-	      // if(smooth == 0){
-	      // 	smoothness -= Math.pow(2*grid.cells[x][y].value, 2);
-	      // }
-
-	      // // gradient right for top row, after we get a 512
-	      // if(y == 0 && grid.cells[x - 1][y].value > grid.cells[x][y].value){
-	      // 	monotonicity += Math.pow(grid.cells[x - 1][y].value - grid.cells[x][y].value, 2);
-	      // }
-	    }
-	  }
-	}
-      }
-
-      // entropy for this direction, could also use total, maxTile, cellsAvailable, or others
-      //console.log({smoothness: smoothness, monotonicity: monotonicity, count: count, maxTile: maxTile, total: total});
-      var sum = smoothness + monotonicity + count - Math.pow(maxTile, 4) - total;
-      var max = Math.max(smoothness, monotonicity, count, Math.pow(maxTile, 4), total);
-      // var sum = smoothness + monotonicity + count;
-      // var max = Math.max(smoothness, monotonicity, count);
-      entropies[dir] = sum / max;
-
-      // if the biggest tile isn't on top right corner, freak out
-      if(maxLoc.x != 0 || maxLoc.y != 0){
-	entropies[dir] = Infinity;
-      }
-    } 
-  }
-  
-  return entropies;
-};
-
-GameManager.prototype.chooseLeastEntropy = function (entropies) {
-  var min = Infinity;
-  var minDir = -1;
-
-  for(var dir = 0; dir < 4; dir++){
-    if(entropies[dir] < min){
-      min = entropies[dir];
-      minDir = dir;
-    }
+    // And swap it with the current element.
+    t = array[m];
+    array[m] = array[i];
+    array[i] = t;
   }
 
-  return {entropy: min, dir: minDir};
-};
+  return array;
+}
