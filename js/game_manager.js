@@ -304,11 +304,11 @@ var DIRECTIONS = {
 };
 
 var M = 1;
-var T = 10;
 var EPSILON = 0;
 
 GameManager.prototype.train = function() {
   console.log('train - called');
+  this.actuator.isTraining = true;
 
   // initialize replay memory
   this.D = [];
@@ -318,12 +318,13 @@ GameManager.prototype.train = function() {
 
   // run M training episodes
   for(var episode = 0; episode < M; episode++){
-    // initialize sequence and preprocess phi
-    var sequence = this.grid.toVector();
-    var phi = this.Q.preprocess(sequence);
+    // get first grid, initialize sequence, and preprocess phi
+    var grid = this.grid.toVector();
+    var sequence = [grid];
+    var phi = this.Q.preprocess(grid);
 
-    // run T moves
-    for(var t = 0; t < T; t++){
+    // play till game over
+    while(!this.isGameTerminated()){
       // behavior distribution (epsilon-greedy strategy)
       var action;
       if(Math.random() < EPSILON){
@@ -337,11 +338,51 @@ GameManager.prototype.train = function() {
       }
 
       // execute action in the emulator, if we're not in a terminal state
-      console.log("train - moving: " + DIRECTIONS[action.move]);
       if(action.newGrid){
+	console.log("train - moving: " + DIRECTIONS[action.move]);
 	this.move(action.move);
       }
+
+      // observe reward and new grid from the emulator
+      var reward = this.score;
+      var newGrid = this.grid.toVector();
+
+      // store action and new grid in this game's sequence
+      sequence.push(action.move);
+      sequence.push(newGrid);
+
+      // preprocess next phi
+      var newPhi = this.Q.preprocess(newGrid);
+
+      // store transition in replay memory
+      var transition = {
+	phi: phi,
+	move: action.move,
+	reward: reward,
+	newPhi: newPhi,
+	isTerminal: this.isGameTerminated()
+      };
+      this.D.push(transition);
+
+      // sample a transition uniformly at random from D
+      console.log("train - sampling a random transition");
+      var sampleTransition = math.pickRandom(this.D);
+
+      var y;
+      if(transition.isTerminal){
+	// terminal transition, y is reward
+	console.log("train - terminal transition");
+      } else {
+	// non-terminal transition, y is reward + lambda * Q's favorite move
+	console.log("train - non-terminal transition");
+      }
     }
+
+    // hit restart, without training again
+    console.log("train - " + (episode + 1) + " games played");
+    this.actuator.continueGame();
+    this.storageManager.clearGameState();
+    this.setup();
   }
 }
 
@@ -352,8 +393,9 @@ GameManager.prototype.makeMove = function () {
 GameManager.prototype.randomMove = function(){
   // order the possible moves randomly
   var moves = shuffle([0,1,2,3]);
-  var move;
+  var move = null;
   var madeMove = false;
+  var newGrid = null;
 
   // while we have moves to try
   while(moves.length > 0 && !madeMove){
@@ -375,12 +417,14 @@ GameManager.prototype.randomMove = function(){
 };
 
 GameManager.prototype.bestMove = function(phi){
-  var bestMove = false, bestScore = -Infinity;
+  var newGrid = null;
+  var move = null;
+  var bestMove = null
+  var score = null;
+  var bestScore = -Infinity;
 
   // pick the locally optimal move based on our current Q network
   var moves = [0,1,2,3];
-  var score = null;
-  var move, newGrid;
   while(moves.length > 0){
     move = moves.shift();
 
