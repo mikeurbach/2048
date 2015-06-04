@@ -303,9 +303,13 @@ var DIRECTIONS = {
   3: 'left'
 };
 
-var M = 1;
+var M = 2;
 var EPSILON = 0;
+var GAMMA = 0.5;
 
+// deep Q-learning with experience replay
+// http://arxiv.org/pdf/1312.5602v1.pdf
+// Algorithm 1
 GameManager.prototype.train = function() {
   console.log('train - called');
   this.actuator.isTraining = true;
@@ -314,7 +318,7 @@ GameManager.prototype.train = function() {
   this.D = [];
 
   // initialize Q network
-  this.Q = new Q(16, [260, 500, 1]);
+  this.Q = new Q(16, [260, 500, 1], 3.0);
 
   // run M training episodes
   for(var episode = 0; episode < M; episode++){
@@ -324,6 +328,7 @@ GameManager.prototype.train = function() {
     var phi = this.Q.preprocess(grid);
 
     // play till game over
+    var moves = 0;
     while(!this.isGameTerminated()){
       // behavior distribution (epsilon-greedy strategy)
       var action;
@@ -369,17 +374,25 @@ GameManager.prototype.train = function() {
       var sampleTransition = math.pickRandom(this.D);
 
       var y;
-      if(transition.isTerminal){
+      if(sampleTransition.isTerminal){
 	// terminal transition, y is reward
 	console.log("train - terminal transition");
+	y = sampleTransition.reward;
       } else {
-	// non-terminal transition, y is reward + lambda * Q's favorite move
+	// non-terminal transition, y is reward + gamma * Q's best score for next move
 	console.log("train - non-terminal transition");
+	y = sampleTransition.reward + GAMMA * this.bestMove(sampleTransition.newPhi).score;
       }
+
+      // perform a gradient descent step on (y - Q's best score for this move)^2
+      console.log("train - running one backpropagation iteration");
+      this.Q.backprop(sampleTransition.phi, sampleTransition.move, y);
+
+      moves++;
     }
 
     // hit restart, without training again
-    console.log("train - " + (episode + 1) + " games played");
+    console.log("train - " + (episode + 1) + " games played (moves: "+ moves +", score: "+ this.score +")");
     this.actuator.continueGame();
     this.storageManager.clearGameState();
     this.setup();
@@ -441,7 +454,7 @@ GameManager.prototype.bestMove = function(phi){
 
 
   // return the optimal move
-  return {newGrid: score != null, move: bestMove};
+  return {newGrid: score != null, move: bestMove, score: bestScore};
 };
 
 // helpers
